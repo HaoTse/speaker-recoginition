@@ -17,11 +17,16 @@ for fold = 1:5
                     file_name = sprintf('record/S%d/%d_%d.wav', s, i, j);
                     feature = mfcc(file_name);
                     features{i * 5 + j} = feature;
-                     if j == fold
+                    if j == fold
                         test_features{s, i + 1} = feature;
                         continue;
                     end
-
+                    tmp = j;
+                    if j > fold
+                        tmp = j - fold;
+                    end
+                    train_features{s, i * 4 + tmp} = feature;
+                    
                     if isempty(feature_point)
                         feature_point = feature;
                     else
@@ -31,8 +36,17 @@ for fold = 1:5
             end
 
             %% kmeans
-            [clusters, c, iter] = kmeans(feature_point, k);
-
+            sumd = inf;
+            for i = 1:15
+                [tmp_clusters, tmp_c, tmp_sumd] = kmeans(feature_point', k);
+                tmp_clusters = tmp_clusters';
+                if tmp_sumd < sumd
+                    clusters = tmp_clusters;
+                    sumd = tmp_sumd;
+                    c = tmp_c;
+                end
+            end
+            
             %% compute Gaussian model
             for i = 1:k
                 % compute mean
@@ -45,13 +59,13 @@ for fold = 1:5
                 for j = 1:39
                     var(j, i) = sum((feature_point(j, find(clusters == i)) - mean(j, i)) .^ 2);
                 end
-                var(:, i) = var(:, i) / length(find(clusters == i));
+                var(:, i) = sqrt(var(:, i) / length(find(clusters == i)));
             end
             model{s, 1} = mean;
             model{s, 2} = var;
         end
 
-        %% recognition result
+        %% test recognition result
         right = zeros(6, 1);
         total = zeros(6, 1);
         con_matrix = zeros(6, 6);
@@ -70,13 +84,50 @@ for fold = 1:5
         end
         pro = sum(right) / sum(total);
     
-        %% output result
-        filename = sprintf('result/fold%d/k%d.txt', fold, k);
+        %% test output result
+        filename = sprintf('result/test/fold%d/k%d.txt', fold, k);
         fout = fopen(filename, 'w');
         fprintf(fout, sprintf('probability: %7.4f (%d / %d)', pro, sum(right), sum(total)));
         fclose(fout);
         % output confusion matrix
-        filename = sprintf('result/fold%d/matrix%d.txt', fold, k);
+        filename = sprintf('result/test/fold%d/matrix%d.txt', fold, k);
+        fout = fopen(filename, 'w');
+        fprintf(fout, col_header);
+        fprintf(fout, '\n');
+        format = '%3d%3d%3d%3d%3d%3d (%2d/%2d)\n';
+        [nrows, ncols] = size(con_matrix);
+        for row = 1:nrows
+            fprintf(fout, row_header(row, :));
+            fprintf(fout, format, con_matrix(row, :));
+        end
+        fclose(fout);
+        
+        %% train recognition result
+        right = zeros(6, 1);
+        total = zeros(6, 1);
+        con_matrix = zeros(6, 6);
+        for s = 1:6
+            for t = 1:24
+                test = train_features{s, t};
+                re = recognition(model, test, k);
+                idx = find(re == max(re), 1);
+                right(s) = right(s) + (idx == s);
+                total(s) = total(s) + 1;
+                result(s, t) = idx;
+                con_matrix(s, idx) = con_matrix(s, idx) + 1;
+            end
+            con_matrix(s, 7) = right(s);
+            con_matrix(s, 8) = total(s);
+        end
+        pro = sum(right) / sum(total);
+    
+        %% train output result
+        filename = sprintf('result/train/fold%d/k%d.txt', fold, k);
+        fout = fopen(filename, 'w');
+        fprintf(fout, sprintf('probability: %7.4f (%d / %d)', pro, sum(right), sum(total)));
+        fclose(fout);
+        % output confusion matrix
+        filename = sprintf('result/train/fold%d/matrix%d.txt', fold, k);
         fout = fopen(filename, 'w');
         fprintf(fout, col_header);
         fprintf(fout, '\n');
